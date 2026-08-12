@@ -81,6 +81,18 @@
             </button>
 
             <div class="export-popover hidden" id="export-popover">
+                <div class="export-section-label">PDF Document</div>
+              <button class="export-option-btn export-highlight-btn" id="btn-export-annotated-pdf" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <span>Export Annotated PDF</span>
+              </button>
+
               <div class="export-section-label">Entire Class Note</div>
               <button class="export-option-btn export-highlight-btn" id="btn-export-classnote-pdf">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -545,7 +557,7 @@
           <div class="toolbar-separator" role="separator"></div>
 
           <!-- AI -->
-          <button class="tool-btn ai-btn" id="tool-ai" data-tool="ai" title="AI Assistant" aria-label="AI Tool">
+          <button class="tool-btn action-btn-edit ai-btn" id="tool-ai" data-tool="ai" title="AI Assistant" aria-label="AI Tool">
             <div class="ai-icon-container">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 3l1.912 5.885L20 10.8l-4.706 4.115L16.471 21 12 17.5 7.529 21l1.177-6.085L4 10.8l6.088-1.915L12 3z"></path>
@@ -555,6 +567,48 @@
           </button>
         </nav>
       </footer>
+
+      <!-- AI Handwriting Recognition Modal -->
+      <div class="ai-modal-overlay hidden" id="ai-recognition-modal-overlay">
+        <div class="ai-modal">
+          <div class="ai-modal-header">
+            <div class="modal-header-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l1.912 5.885L20 10.8l-4.706 4.115L16.471 21 12 17.5 7.529 21l1.177-6.085L4 10.8l6.088-1.915L12 3z"></path>
+              </svg>
+              <h2>Handwriting Recognition</h2>
+            </div>
+            <button class="modal-close-btn" id="btn-close-ai-modal" aria-label="Close AI Modal">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="ai-modal-body">
+            <div class="ai-modal-row">
+              <label for="recognition-mode-select" class="ai-modal-label">Recognition mode</label>
+              <select id="recognition-mode-select" class="ai-modal-select" aria-label="Recognition mode selector">
+                <option value="handwriting">Handwriting</option>
+                <option value="equation">Equation</option>
+                <option value="diagram">Diagram</option>
+                <option value="circuit">Circuit</option>
+                <option value="verilog">Verilog</option>
+              </select>
+            </div>
+            <p class="ai-modal-description" id="ai-modal-description">
+              Select a recognition mode and click Recognize. Demo provider only — AI model not connected.
+            </p>
+            <div class="ai-modal-summary" id="ai-modal-summary"></div>
+            <div class="ai-modal-output" id="ai-modal-output"></div>
+            <textarea id="ai-modal-textarea" class="ai-modal-textarea hidden" aria-label="Recognized handwriting text preview"></textarea>
+          </div>
+          <div class="ai-modal-actions">
+            <button class="btn-top-bar btn-secondary" id="btn-ai-cancel" type="button">Cancel</button>
+            <button class="btn-top-bar btn-primary-action" id="btn-ai-convert" type="button">Recognize</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Saved Boards Modal Dialog -->
       <div class="boards-modal-overlay hidden" id="boards-modal-overlay">

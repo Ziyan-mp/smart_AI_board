@@ -34,7 +34,7 @@ export interface StoredBoardSummary {
 
 export class BoardDatabase {
   private static readonly DB_NAME = 'AI_Smart_Board_DB';
-  private static readonly DB_VERSION = 3;
+  private static readonly DB_VERSION = 4;
   private static readonly STORE_BOARDS = 'boards';
   private static readonly STORE_META = 'meta';
   private static readonly STORE_PDF_ANNOTATIONS = 'pdf_annotations';
@@ -359,6 +359,18 @@ export class BoardDatabase {
         resolve();
       };
       request.onerror = () => reject(new Error(`Failed to delete annotations for PDF [${pdfDocumentId}]: ${request.error?.message}`));
+    });
+  }
+
+  public async deletePdfPageAnnotations(pdfDocumentId: string, pageNumber: number): Promise<void> {
+    const db = await this.getDB();
+    const id = `${pdfDocumentId}-page-${pageNumber}`;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BoardDatabase.STORE_PDF_ANNOTATIONS, 'readwrite');
+      const store = tx.objectStore(BoardDatabase.STORE_PDF_ANNOTATIONS);
+      const request = store.delete(id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(new Error(`Failed to delete PDF annotations [${id}]: ${request.error?.message}`));
     });
   }
 }

@@ -827,6 +827,131 @@ html, body {
   border: 1px solid var(--border-light);
 }
 
+.ai-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 220;
+  transition: opacity 0.2s ease;
+}
+
+.ai-modal-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ai-modal {
+  width: min(92%, 560px);
+  max-height: 85vh;
+  background: #ffffff;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
+  border: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ai-modal-header,
+.ai-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background-color: #f8fafc;
+}
+
+.ai-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-modal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-modal-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ai-modal-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  color: var(--text-main);
+}
+
+.ai-modal-description {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.ai-modal-summary {
+  font-size: 0.95rem;
+  color: var(--text-main);
+  min-height: 24px;
+}
+
+.ai-modal-output {
+  width: 100%;
+  min-height: 140px;
+  padding: 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  color: var(--text-main);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.95rem;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.ai-modal-output.hidden {
+  display: none;
+}
+
+.ai-modal-textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  padding: 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  background: #f8fafc;
+}
+
+.ai-modal-textarea.hidden {
+  display: none;
+}
+
+.ai-modal-actions {
+  gap: 12px;
+}
+
+.ai-modal-actions .btn-top-bar {
+  min-width: 120px;
+}
+
 .boards-modal-header {
   display: flex;
   align-items: center;

@@ -10,13 +10,16 @@ import { ClassNote } from '../models/ClassNote';
 import { BoardPage } from '../models/BoardPage';
 import { BoardObject } from '../models/BoardObject';
 import { PdfPageAnnotations } from '../models/PdfPageAnnotations';
+import { PdfStorageService } from './PdfStorageService';
 
 export class BoardStorageService {
   private db: BoardDatabase;
+  private pdfStorage: PdfStorageService;
   private static readonly META_LAST_NOTE = 'last_opened_board_id';
 
   constructor() {
     this.db = new BoardDatabase();
+    this.pdfStorage = new PdfStorageService();
   }
 
   /**
@@ -79,6 +82,9 @@ export class BoardStorageService {
       name: (note.name || 'Untitled Class Note').trim(),
       pages: sanitizedPages,
       currentPageId: note.currentPageId || sanitizedPages[0]?.id,
+      pdfDocumentIds: Array.isArray(note.pdfDocumentIds) ? [...note.pdfDocumentIds] : undefined,
+      activePdfDocumentId: typeof note.activePdfDocumentId === 'string' ? note.activePdfDocumentId : undefined,
+      activePdfPageNumber: typeof note.activePdfPageNumber === 'number' ? note.activePdfPageNumber : undefined,
       createdAt: note.createdAt || now,
       updatedAt: now,
     };
@@ -103,6 +109,9 @@ export class BoardStorageService {
       name: validated.name,
       pages: validated.pages,
       currentPageId: validated.currentPageId || validated.pages[0]?.id || this.generateId('page'),
+      pdfDocumentIds: Array.isArray(validated.pdfDocumentIds) ? [...validated.pdfDocumentIds] : undefined,
+      activePdfDocumentId: typeof validated.activePdfDocumentId === 'string' ? validated.activePdfDocumentId : undefined,
+      activePdfPageNumber: typeof validated.activePdfPageNumber === 'number' ? validated.activePdfPageNumber : undefined,
       createdAt: validated.createdAt,
       updatedAt: validated.updatedAt,
     };
@@ -139,6 +148,7 @@ export class BoardStorageService {
    * Deletes a document by ID from IndexedDB.
    */
   public async deleteBoard(id: string): Promise<void> {
+    await this.pdfStorage.deletePdfDocumentsForClassNote(id);
     await this.db.deleteBoard(id);
     const lastOpened = await this.getLastOpenedNoteId();
     if (lastOpened === id) {
@@ -247,11 +257,23 @@ export class BoardStorageService {
         ? data.currentPageId
         : pages[0].id;
 
+    const pdfDocumentIds = Array.isArray(data.pdfDocumentIds)
+      ? data.pdfDocumentIds.filter((id: any) => typeof id === 'string')
+      : undefined;
+
+    const activePdfDocumentId = typeof data.activePdfDocumentId === 'string' ? data.activePdfDocumentId : undefined;
+    const activePdfPageNumber = typeof data.activePdfPageNumber === 'number' && data.activePdfPageNumber >= 1
+      ? data.activePdfPageNumber
+      : undefined;
+
     return {
       id: data.id,
       name,
       pages,
       currentPageId,
+      pdfDocumentIds,
+      activePdfDocumentId,
+      activePdfPageNumber,
       createdAt,
       updatedAt,
     };
@@ -321,5 +343,29 @@ export class BoardStorageService {
     pdfDocumentId: string
   ): Promise<PdfPageAnnotations[]> {
     return await this.db.getAllPdfAnnotationsForDoc(pdfDocumentId);
+  }
+
+  public async savePdfDocument(doc: import('../models/StoredPdfDocument').StoredPdfDocument): Promise<void> {
+    await this.pdfStorage.savePdfDocument(doc);
+  }
+
+  public async getPdfDocument(id: string): Promise<import('../models/StoredPdfDocument').StoredPdfDocument | null> {
+    return await this.pdfStorage.getPdfDocument(id);
+  }
+
+  public async getPdfDocumentsForClassNote(classNoteId: string): Promise<import('../models/StoredPdfDocument').StoredPdfDocument[]> {
+    return await this.pdfStorage.getPdfDocumentsForClassNote(classNoteId);
+  }
+
+  public async deletePdfDocument(id: string): Promise<void> {
+    await this.pdfStorage.deletePdfDocument(id);
+  }
+
+  public async deletePdfAnnotations(pdfDocumentId: string, pageNumber: number): Promise<void> {
+    await this.pdfStorage.deletePdfAnnotations(pdfDocumentId, pageNumber);
+  }
+
+  public async deleteAllPdfAnnotations(pdfDocumentId: string): Promise<void> {
+    await this.pdfStorage.deleteAllPdfAnnotations(pdfDocumentId);
   }
 }

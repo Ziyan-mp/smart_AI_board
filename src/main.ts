@@ -6,17 +6,27 @@
 
 import { WhiteboardCanvas } from './canvas/WhiteboardCanvas';
 import { DrawingTool, ShapeType } from './tools/DrawingTool';
-import { TextAlign } from './models/TextObject';
 import { BoardObject } from './models/BoardObject';
+import { StoredPdfDocument } from './models/StoredPdfDocument';
 import { BoardStorageService } from './storage/BoardStorageService';
 import { StoredBoardSummary } from './storage/BoardDatabase';
 import { BoardExporter } from './export/BoardExporter';
 import { ClassNotePdfExporter } from './export/ClassNotePdfExporter';
+import { AnnotatedPdfExporter } from './export/AnnotatedPdfExporter';
 import { ClassNoteManager } from './core/ClassNoteManager';
 import { PageThumbnailRenderer } from './pages/PageThumbnailRenderer';
 import { PdfViewerService } from './pdf/PdfViewerService';
 import { PdfAnnotationManager } from './pdf/PdfAnnotationManager';
 import { HistoryManager } from './history/HistoryManager';
+import { FreehandObject } from './models/FreehandObject';
+import { TextObject, TextAlign } from './models/TextObject';
+import { EquationObject } from './models/EquationObject';
+import {
+  HandwritingRecognitionService,
+  MockHandwritingRecognitionProvider,
+  RecognitionMode,
+  RecognitionResultBase,
+} from './ai/HandwritingRecognitionService';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // 1. Initialize Whiteboard Canvas, Storage Service, ClassNoteManager & PdfAnnotationManager
@@ -102,6 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentBoardName = noteManager.getClassNote().name;
   let isInitialLoading = true;
   let autosaveTimer: number | null = null;
+  let pdfAnnotationSaveTimer: number | null = null;
 
   // UI Toast notification helper
   const statusToast = document.getElementById('status-toast') as HTMLDivElement | null;
@@ -166,6 +177,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Undo / Redo button references
   const undoBtn = document.getElementById('btn-undo') as HTMLButtonElement | null;
   const redoBtn = document.getElementById('btn-redo') as HTMLButtonElement | null;
+
+  // AI and edit button references are declared early so loadActivePageIntoCanvas can safely update button states.
+  let aiToolBtn: HTMLButtonElement | null = null;
+  let copyBtn: HTMLButtonElement | null = null;
+  let pasteBtn: HTMLButtonElement | null = null;
+  let deleteBtn: HTMLButtonElement | null = null;
 
   function updateHistoryButtons(): void {
     if (undoBtn) {
@@ -372,9 +389,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 750);
   }
 
+  function schedulePdfAnnotationAutosave(): void {
+    if (isInitialLoading) return;
+    if (!pdfViewer.hasPdf()) return;
+    if (pdfAnnotationSaveTimer !== null) {
+      window.clearTimeout(pdfAnnotationSaveTimer);
+    }
+    pdfAnnotationSaveTimer = window.setTimeout(async () => {
+      try {
+        await saveActivePdfPageAnnotations();
+        const note = noteManager.getClassNote();
+        if (note.activePdfDocumentId === pdfViewer.getCurrentDocument()?.id) {
+          note.activePdfPageNumber = pdfViewer.getCurrentPageNumber();
+          await storageService.saveClassNote(note);
+        }
+        console.log('[Smart Board] Autosaved PDF page annotations');
+      } catch (err) {
+        console.error('[Smart Board] PDF annotation autosave failed:', err);
+      }
+      pdfAnnotationSaveTimer = null;
+    }, 750);
+  }
+
   // Subscribe to BoardState changes for autosave and thumbnails update
   whiteboard.boardState.onChange(() => {
     scheduleAutosave();
+    schedulePdfAnnotationAutosave();
   });
 
   // Manual Save Function
@@ -405,7 +445,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         noteManager.setClassNote(storedNote);
         currentBoardId = storedNote.id;
         setBoardName(storedNote.name);
-        loadActivePageIntoCanvas();
+        if (storedNote.activePdfDocumentId) {
+          await restorePdfForClassNote(storedNote);
+        } else {
+          loadActivePageIntoCanvas();
+        }
         loaded = true;
         console.log(`[Smart Board] Auto-loaded last opened class note "${storedNote.name}" (${storedNote.id})`);
       }
@@ -433,11 +477,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   const saveBtn = document.getElementById('btn-save') as HTMLButtonElement | null;
   const exportBtn = document.getElementById('btn-export') as HTMLButtonElement | null;
   const exportPopover = document.getElementById('export-popover') as HTMLDivElement | null;
+  const exportAnnotatedPdfBtn = document.getElementById('btn-export-annotated-pdf') as HTMLButtonElement | null;
   const exportPngBtn = document.getElementById('btn-export-png') as HTMLButtonElement | null;
   const exportSvgBtn = document.getElementById('btn-export-svg') as HTMLButtonElement | null;
   const exportPrintBtn = document.getElementById('btn-export-print') as HTMLButtonElement | null;
   const exportPdfBtn = document.getElementById('btn-export-classnote-pdf') as HTMLButtonElement | null;
   const settingsBtn = document.getElementById('btn-settings') as HTMLButtonElement | null;
+  aiToolBtn = document.getElementById('tool-ai') as HTMLButtonElement | null;
+  const aiModalOverlay = document.getElementById('ai-recognition-modal-overlay') as HTMLDivElement | null;
+  const aiModalTextArea = document.getElementById('ai-modal-textarea') as HTMLTextAreaElement | null;
+  const aiModalOutput = document.getElementById('ai-modal-output') as HTMLDivElement | null;
+  const aiModalSummary = document.getElementById('ai-modal-summary') as HTMLDivElement | null;
+  const recognitionModeSelect = document.getElementById('recognition-mode-select') as HTMLSelectElement | null;
+  const btnAiCancel = document.getElementById('btn-ai-cancel') as HTMLButtonElement | null;
+  const btnAiConvert = document.getElementById('btn-ai-convert') as HTMLButtonElement | null;
+  const btnCloseAiModal = document.getElementById('btn-close-ai-modal') as HTMLButtonElement | null;
+
+  const handwritingRecognitionService = new HandwritingRecognitionService(
+    new MockHandwritingRecognitionProvider()
+  );
+
+  if (recognitionModeSelect) {
+    recognitionModeSelect.addEventListener('change', () => {
+      showAiModalContentForMode(getSelectedRecognitionMode());
+    });
+  }
+
+  let aiModalResult: RecognitionResultBase | null = null;
 
   function closeExportPopover(): void {
     if (exportPopover) {
@@ -451,6 +517,59 @@ document.addEventListener('DOMContentLoaded', async () => {
       closeShapesPopover();
       closeTextPopover();
       exportPopover.classList.toggle('hidden');
+    });
+  }
+
+  function updateAnnotatedPdfButtonState(): void {
+    if (!exportAnnotatedPdfBtn) return;
+    exportAnnotatedPdfBtn.disabled = !pdfViewer.hasPdf();
+  }
+
+  if (exportAnnotatedPdfBtn) {
+    exportAnnotatedPdfBtn.addEventListener('click', async () => {
+      closeExportPopover();
+      try {
+        if (!pdfViewer.hasPdf()) {
+          showToast('No PDF loaded to export.');
+          return;
+        }
+
+        const doc = pdfViewer.getCurrentDocument();
+        if (!doc) {
+          showToast('No PDF document available to export.');
+          return;
+        }
+
+        const annotations = await storageService.loadAllPdfAnnotationsForDocument(doc.id);
+        const annotationsMap = new Map<number, BoardObject[]>();
+        for (const item of annotations) {
+          annotationsMap.set(item.pageNumber, item.objects || []);
+        }
+
+        const pdfBuffer = doc.arrayBuffer
+          ? doc.arrayBuffer
+          : await (async () => {
+              const stored = await storageService.getPdfDocument(doc.id);
+              if (!stored) throw new Error('PDF source file not found in storage.');
+              return await stored.fileBlob.arrayBuffer();
+            })();
+
+        showToast('Exporting annotated PDF...');
+
+        await AnnotatedPdfExporter.exportAnnotatedPdf(
+          pdfBuffer,
+          doc.fileName,
+          annotationsMap,
+          (current, total) => {
+            showToast(`Exporting annotated page ${current} of ${total}...`, 800);
+          }
+        );
+
+        showToast('Annotated PDF exported successfully');
+      } catch (err) {
+        console.error('[Smart Board] Annotated PDF export failed:', err);
+        showToast('Unable to export annotated PDF.');
+      }
     });
   }
 
@@ -558,6 +677,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pdfPageIndicator = document.getElementById('pdf-page-indicator') as HTMLSpanElement | null;
   const btnPdfFit = document.getElementById('btn-pdf-fit') as HTMLButtonElement | null;
   const btnPdfClose = document.getElementById('btn-pdf-close') as HTMLButtonElement | null;
+  const boardsModalOverlay = document.getElementById('boards-modal-overlay') as HTMLDivElement | null;
+  const closeBoardsModalBtn = document.getElementById('btn-close-boards-modal') as HTMLButtonElement | null;
+  const boardsListContainer = document.getElementById('boards-list-container') as HTMLDivElement | null;
 
   async function saveActivePdfPageAnnotations(): Promise<void> {
     if (!pdfViewer.hasPdf()) return;
@@ -567,6 +689,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const objs = whiteboard.boardState.getObjects();
     pdfAnnotationManager.setPageAnnotations(doc.id, pageNum, objs);
     await storageService.savePdfAnnotations(doc.id, pageNum, objs);
+
+    const note = noteManager.getClassNote();
+    note.activePdfDocumentId = doc.id;
+    note.activePdfPageNumber = pageNum;
+    if (!note.pdfDocumentIds) {
+      note.pdfDocumentIds = [doc.id];
+    } else if (!note.pdfDocumentIds.includes(doc.id)) {
+      note.pdfDocumentIds.push(doc.id);
+    }
+    await storageService.saveClassNote(note);
   }
 
   async function loadPdfPageWithAnnotations(targetPageNum: number): Promise<void> {
@@ -609,7 +741,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       pageNumber: targetPageNum,
     });
 
-    // 7. Update UI status indicators
+    // 7. Update note metadata and UI status indicators
+    const note = noteManager.getClassNote();
+    note.activePdfDocumentId = doc.id;
+    note.activePdfPageNumber = targetPageNum;
+    if (!note.pdfDocumentIds) {
+      note.pdfDocumentIds = [doc.id];
+    } else if (!note.pdfDocumentIds.includes(doc.id)) {
+      note.pdfDocumentIds.push(doc.id);
+    }
+    await storageService.saveClassNote(note);
+
     const total = pdfViewer.getPageCount();
     if (pdfDocTitle) pdfDocTitle.textContent = doc.fileName || doc.name;
     if (pdfPageIndicator) pdfPageIndicator.textContent = `PDF Page ${targetPageNum} of ${total}`;
@@ -639,22 +781,55 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       if (pdfViewer.hasPdf()) {
-        const confirmed = window.confirm('Replace the current PDF?');
-        if (!confirmed) {
-          target.value = '';
-          return;
-        }
-        await saveActivePdfPageAnnotations();
-      }
+          const confirmed = window.confirm('Replace the current PDF? This will remove the current PDF from this class note.');
+          if (!confirmed) {
+            target.value = '';
+            return;
+          }
+          await saveActivePdfPageAnnotations();
 
+          const currentNote = noteManager.getClassNote();
+          if (currentNote.activePdfDocumentId) {
+            await storageService.deletePdfDocument(currentNote.activePdfDocumentId);
+            currentNote.pdfDocumentIds = currentNote.pdfDocumentIds?.filter((id) => id !== currentNote.activePdfDocumentId);
+            currentNote.activePdfDocumentId = undefined;
+            currentNote.activePdfPageNumber = undefined;
+            await storageService.saveClassNote(currentNote);
+          }
+        }
       try {
         showToast('Loading PDF document...');
         const arrayBuffer = await file.arrayBuffer();
-        await pdfViewer.loadPdf(arrayBuffer, file.name);
+        const pdfDoc = await pdfViewer.loadPdf(arrayBuffer, file.name);
+
+        updateAnnotatedPdfButtonState();
 
         if (pdfDockPanel) {
           pdfDockPanel.classList.remove('hidden');
         }
+
+        const storedPdf: StoredPdfDocument = {
+          id: pdfDoc.id,
+          classNoteId: noteManager.getClassNote().id,
+          name: pdfDoc.name,
+          fileName: file.name,
+          mimeType: file.type || 'application/pdf',
+          pageCount: pdfDoc.pageCount,
+          fileBlob: new Blob([arrayBuffer], { type: file.type || 'application/pdf' }),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+
+        await storageService.savePdfDocument(storedPdf);
+
+        const note = noteManager.getClassNote();
+        note.pdfDocumentIds = note.pdfDocumentIds || [];
+        if (!note.pdfDocumentIds.includes(storedPdf.id)) {
+          note.pdfDocumentIds.push(storedPdf.id);
+        }
+        note.activePdfDocumentId = storedPdf.id;
+        note.activePdfPageNumber = 1;
+        await storageService.saveClassNote(note);
 
         // Initialize and load Page 1 annotations
         pdfAnnotationManager.clearAll();
@@ -704,24 +879,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (btnPdfClose) {
     btnPdfClose.addEventListener('click', async () => {
-      if (pdfViewer.hasPdf()) {
-        await saveActivePdfPageAnnotations();
-        pdfViewer.closePdf();
-        whiteboard.setPdfPage(null);
-        if (pdfDockPanel) {
-          pdfDockPanel.classList.add('hidden');
-        }
-        pdfAnnotationManager.clearAll();
-        loadActivePageIntoCanvas();
-        showToast('Closed PDF');
+      if (!pdfViewer.hasPdf()) return;
+
+      const confirmed = window.confirm('Remove this PDF and its annotations from the current class note?');
+      if (!confirmed) return;
+
+      const doc = pdfViewer.getCurrentDocument();
+      await saveActivePdfPageAnnotations();
+      if (doc) {
+        await storageService.deletePdfDocument(doc.id);
       }
+
+      pdfViewer.closePdf();
+      whiteboard.setPdfPage(null);
+      if (pdfDockPanel) {
+        pdfDockPanel.classList.add('hidden');
+      }
+      pdfAnnotationManager.clearAll();
+      updateAnnotatedPdfButtonState();
+
+      const note = noteManager.getClassNote();
+      if (note.activePdfDocumentId === doc?.id) {
+        note.activePdfDocumentId = undefined;
+        note.activePdfPageNumber = undefined;
+      }
+      note.pdfDocumentIds = note.pdfDocumentIds?.filter((id) => id !== doc?.id);
+      await storageService.saveClassNote(note);
+
+      loadActivePageIntoCanvas();
+      showToast('Removed PDF from class note');
     });
   }
-
-  // Saved Class Notes Modal Dialog
-  const boardsModalOverlay = document.getElementById('boards-modal-overlay') as HTMLDivElement | null;
-  const closeBoardsModalBtn = document.getElementById('btn-close-boards-modal') as HTMLButtonElement | null;
-  const boardsListContainer = document.getElementById('boards-list-container') as HTMLDivElement | null;
 
   function closeBoardsModal(): void {
     if (boardsModalOverlay) {
@@ -823,6 +1011,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  async function restorePdfForClassNote(storedNote: import('./models/ClassNote').ClassNote): Promise<void> {
+    if (!storedNote.activePdfDocumentId) {
+      loadActivePageIntoCanvas();
+      return;
+    }
+
+    try {
+      const pdfDocRecord = await storageService.getPdfDocument(storedNote.activePdfDocumentId);
+      if (!pdfDocRecord) {
+        console.warn('[Smart Board] PDF record not found for loaded class note:', storedNote.activePdfDocumentId);
+        loadActivePageIntoCanvas();
+        return;
+      }
+
+      const arrayBuffer = await pdfDocRecord.fileBlob.arrayBuffer();
+      const initialPage = storedNote.activePdfPageNumber && storedNote.activePdfPageNumber >= 1
+        ? storedNote.activePdfPageNumber
+        : 1;
+
+      await pdfViewer.loadPdf(arrayBuffer, pdfDocRecord.fileName, pdfDocRecord.id, initialPage);
+      if (pdfDockPanel) pdfDockPanel.classList.remove('hidden');
+
+      await pdfAnnotationManager.clearAll();
+      await loadPdfPageWithAnnotations(initialPage);
+      updateAnnotatedPdfButtonState();
+
+      const dims = pdfViewer.getPageDimensions();
+      if (dims) {
+        whiteboard.fitToPdfPage(dims);
+      }
+    } catch (err) {
+      console.error('[Smart Board] Failed to restore associated PDF:', err);
+      loadActivePageIntoCanvas();
+    }
+  }
+
   async function loadSavedBoard(id: string): Promise<void> {
     try {
       // Save current document before switching
@@ -838,7 +1062,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       currentBoardId = storedNote.id;
       setBoardName(storedNote.name);
 
-      loadActivePageIntoCanvas();
+      if (storedNote.activePdfDocumentId) {
+        await restorePdfForClassNote(storedNote);
+      } else {
+        loadActivePageIntoCanvas();
+      }
 
       showToast(`Opened "${storedNote.name}"`);
       console.log(`[Smart Board] Opened class note "${storedNote.name}" (${storedNote.id})`);
@@ -921,9 +1149,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 5. Setup Edit Action Buttons (Copy, Paste, Delete)
-  const copyBtn = document.getElementById('btn-copy') as HTMLButtonElement | null;
-  const pasteBtn = document.getElementById('btn-paste') as HTMLButtonElement | null;
-  const deleteBtn = document.getElementById('btn-delete') as HTMLButtonElement | null;
+  copyBtn = document.getElementById('btn-copy') as HTMLButtonElement | null;
+  pasteBtn = document.getElementById('btn-paste') as HTMLButtonElement | null;
+  deleteBtn = document.getElementById('btn-delete') as HTMLButtonElement | null;
+
+  function getSelectedFreehandObjects(): FreehandObject[] {
+    const selectedIds = whiteboard.selectionManager.getSelectedIds();
+    return selectedIds
+      .map((id) => whiteboard.boardState.getObject(id))
+      .filter((obj): obj is FreehandObject => obj !== undefined && obj?.type === 'freehand');
+  }
+
+  function updateAIButtonState(): void {
+    const hasFreehandSelection = getSelectedFreehandObjects().length > 0;
+    if (aiToolBtn) {
+      aiToolBtn.disabled = !hasFreehandSelection;
+      aiToolBtn.title = hasFreehandSelection
+        ? 'Recognize selected handwriting'
+        : 'Select handwriting strokes first';
+    }
+  }
 
   function updateEditButtonsState(): void {
     const selectedIds = whiteboard.selectionManager.getSelectedIds();
@@ -938,6 +1183,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (copyBtn) copyBtn.disabled = !hasSelection;
     if (deleteBtn) deleteBtn.disabled = !hasUnlockedSelection;
     if (pasteBtn) pasteBtn.disabled = !hasClipboard;
+    updateAIButtonState();
   }
 
   whiteboard.selectionManager.onChange(() => updateEditButtonsState());
@@ -959,6 +1205,290 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (deleteBtn) {
     deleteBtn.addEventListener('click', () => {
       whiteboard.deleteSelected();
+    });
+  }
+
+  function getSelectedRecognitionMode(): RecognitionMode {
+    if (!recognitionModeSelect) {
+      return 'handwriting';
+    }
+
+    const selected = recognitionModeSelect.value as RecognitionMode;
+    return (
+      ['handwriting', 'equation', 'diagram', 'circuit', 'verilog'] as RecognitionMode[]
+    ).includes(selected)
+      ? selected
+      : 'handwriting';
+  }
+
+  function showAiModalContentForMode(mode: RecognitionMode): void {
+    if (!aiModalTextArea || !aiModalOutput || !btnAiConvert || !aiModalSummary) return;
+
+    const commonDescription = 'Demo provider only — AI model not connected.';
+    switch (mode) {
+      case 'equation':
+        aiModalSummary.textContent = `Recognize selected strokes as equation. ${commonDescription}`;
+        aiModalTextArea.classList.add('hidden');
+        aiModalOutput.classList.remove('hidden');
+        btnAiConvert.textContent = 'Convert to Equation';
+        break;
+      case 'diagram':
+        aiModalSummary.textContent = `Recognize selected strokes as diagram. ${commonDescription}`;
+        aiModalTextArea.classList.add('hidden');
+        aiModalOutput.classList.remove('hidden');
+        btnAiConvert.textContent = 'Accept Diagram Output';
+        break;
+      case 'circuit':
+        aiModalSummary.textContent = `Recognize selected strokes as circuit. ${commonDescription}`;
+        aiModalTextArea.classList.add('hidden');
+        aiModalOutput.classList.remove('hidden');
+        btnAiConvert.textContent = 'Accept Circuit Output';
+        break;
+      case 'verilog':
+        aiModalSummary.textContent = `Recognize selected strokes as Verilog. ${commonDescription}`;
+        aiModalTextArea.classList.add('hidden');
+        aiModalOutput.classList.remove('hidden');
+        btnAiConvert.textContent = 'Accept Verilog Output';
+        break;
+      case 'handwriting':
+      default:
+        aiModalSummary.textContent = `Recognize selected strokes as handwriting. ${commonDescription}`;
+        aiModalTextArea.classList.remove('hidden');
+        aiModalOutput.classList.add('hidden');
+        btnAiConvert.textContent = 'Convert to Text';
+        break;
+    }
+  }
+
+  async function openAiRecognitionModal(strokes: FreehandObject[]): Promise<void> {
+    if (!aiModalOverlay || !aiModalTextArea || !aiModalSummary || !aiModalOutput) return;
+
+    aiModalResult = null;
+    const mode = getSelectedRecognitionMode();
+    aiModalOverlay.classList.remove('hidden');
+    aiModalOutput.textContent = 'Recognizing selected strokes...';
+    aiModalTextArea.value = 'Recognizing selected strokes...';
+    aiModalTextArea.disabled = true;
+    showAiModalContentForMode(mode);
+
+    try {
+      const result = await handwritingRecognitionService.recognize(mode, strokes);
+      aiModalResult = result;
+
+      const confidenceText = result.confidence !== undefined
+        ? `Mock confidence: ${(result.confidence * 100).toFixed(0)}% — `
+        : '';
+      aiModalSummary.textContent = `${confidenceText}${result.summary}`;
+
+      if (mode === 'handwriting') {
+        aiModalTextArea.value = result.recognizedText;
+        aiModalTextArea.disabled = false;
+        aiModalTextArea.focus();
+      } else {
+        aiModalOutput.textContent = getRecognitionResultOutput(result);
+        aiModalTextArea.disabled = true;
+      }
+    } catch (err) {
+      aiModalSummary.textContent = 'Recognition failed. Please try again.';
+      aiModalOutput.textContent = '';
+      aiModalTextArea.value = '';
+      aiModalTextArea.disabled = false;
+      console.error('[Smart Board] AI recognition failed:', err);
+      showToast('AI recognition failed.');
+    }
+  }
+
+  function getRecognitionResultOutput(result: RecognitionResultBase): string {
+    switch (result.mode) {
+      case 'equation':
+        return `Recognized equation:\n${(result as any).equation}\n\nLaTeX:\n${(result as any).latex}`;
+      case 'diagram': {
+        const diagramResult = result as any;
+        const nodes = diagramResult.nodes
+          .map((node: any) => `• ${node.label} (${node.type}) @ ${node.x},${node.y}`)
+          .join('\n');
+        const edges = diagramResult.edges
+          .map((edge: any) => `• ${edge.from} → ${edge.to}${edge.label ? ` (${edge.label})` : ''}`)
+          .join('\n');
+        return `Diagram description:\n${diagramResult.description}\n\nNodes:\n${nodes}\n\nEdges:\n${edges}`;
+      }
+      case 'circuit': {
+        const circuitResult = result as any;
+        const components = circuitResult.components
+          .map((component: any) => `• ${component.label} (${component.componentType}) @ ${component.x},${component.y}`)
+          .join('\n');
+        const connections = circuitResult.connections
+          .map((connection: any) => `• ${connection.from} → ${connection.to}${connection.label ? ` (${connection.label})` : ''}`)
+          .join('\n');
+        return `Circuit description:\n${circuitResult.description}\n\nComponents:\n${components}\n\nConnections:\n${connections}`;
+      }
+      case 'verilog':
+        return `Verilog code:\n\n${(result as any).code}`;
+      case 'handwriting':
+      default:
+        return result.recognizedText;
+    }
+  }
+
+  function closeAiModal(): void {
+    if (!aiModalOverlay) return;
+    aiModalOverlay.classList.add('hidden');
+  }
+
+  function computeBoundingBox(objects: readonly BoardObject[]): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } {
+    if (objects.length === 0) {
+      return { x: 0, y: 0, width: 160, height: 80 };
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const obj of objects) {
+      minX = Math.min(minX, obj.x);
+      minY = Math.min(minY, obj.y);
+      maxX = Math.max(maxX, obj.x + obj.width);
+      maxY = Math.max(maxY, obj.y + obj.height);
+    }
+
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(160, maxX - minX),
+      height: Math.max(80, maxY - minY),
+    };
+  }
+
+  if (aiToolBtn) {
+    aiToolBtn.addEventListener('click', async () => {
+      const selectedStrokes = getSelectedFreehandObjects();
+      if (selectedStrokes.length === 0) {
+        showToast('Select freehand strokes before using handwriting recognition.');
+        return;
+      }
+
+      await openAiRecognitionModal(selectedStrokes);
+    });
+  }
+
+  if (btnCloseAiModal) {
+    btnCloseAiModal.addEventListener('click', () => {
+      closeAiModal();
+    });
+  }
+
+  if (btnAiCancel) {
+    btnAiCancel.addEventListener('click', () => {
+      closeAiModal();
+    });
+  }
+
+  if (btnAiConvert) {
+    btnAiConvert.addEventListener('click', () => {
+      if (!aiModalResult) {
+        showToast('No recognition result available yet. Please recognize first.');
+        return;
+      }
+
+      const selectedStrokes = getSelectedFreehandObjects();
+      if (selectedStrokes.length === 0) {
+        showToast('The selected handwriting strokes are no longer available.');
+        closeAiModal();
+        return;
+      }
+
+      const bounds = computeBoundingBox(selectedStrokes);
+      let newObject: TextObject | EquationObject | null = null;
+      const mode = aiModalResult.mode;
+
+      for (const stroke of selectedStrokes) {
+        whiteboard.boardState.removeObject(stroke.id);
+      }
+
+      if (mode === 'equation') {
+        const equationResult = aiModalResult as any;
+        const equationText = equationResult.latex || equationResult.equation || aiModalResult.recognizedText;
+        newObject = {
+          id: whiteboard.generateId(),
+          type: 'equation',
+          x: bounds.x,
+          y: bounds.y,
+          width: Math.max(bounds.width, 180),
+          height: Math.max(bounds.height, 100),
+          rotation: 0,
+          visible: true,
+          locked: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          latex: equationText,
+          color: '#111827',
+          fontSize: 28,
+          opacity: 1,
+        };
+      } else {
+        const displayText =
+          mode === 'verilog'
+            ? `Verilog code:\n\n${(aiModalResult as any).code}`
+            : aiModalResult.mode === 'diagram'
+            ? getRecognitionResultOutput(aiModalResult)
+            : aiModalResult.mode === 'circuit'
+            ? getRecognitionResultOutput(aiModalResult)
+            : aiModalTextArea?.value.trim() || aiModalResult.recognizedText;
+
+        const lines = displayText.split('\n');
+        const textHeight = Math.max(80, lines.length * 24 + 20);
+        const textWidth = Math.max(bounds.width, 260);
+
+        newObject = {
+          id: whiteboard.generateId(),
+          type: 'text',
+          x: bounds.x,
+          y: bounds.y,
+          width: textWidth,
+          height: textHeight,
+          rotation: 0,
+          visible: true,
+          locked: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          text: displayText,
+          fontFamily: whiteboard.getFontFamily(),
+          fontSize: Math.min(34, Math.max(16, whiteboard.getFontSize())),
+          color: '#111827',
+          opacity: 1,
+          textAlign: 'left',
+        };
+      }
+
+      if (newObject) {
+        whiteboard.boardState.addObject(newObject as BoardObject);
+        whiteboard.selectionManager.setSelectedIds([newObject.id]);
+        whiteboard.history.recordAction(whiteboard.boardState.getObjects());
+        whiteboard.render();
+        closeAiModal();
+        updateEditButtonsState();
+        showToast(
+          mode === 'equation'
+            ? 'Equation recognition converted to board object.'
+            : mode === 'handwriting'
+            ? 'Handwriting converted to editable text.'
+            : 'Recognition output accepted as board text.'
+        );
+      }
+    });
+  }
+
+  if (aiModalOverlay) {
+    aiModalOverlay.addEventListener('click', (event) => {
+      if (event.target === aiModalOverlay) {
+        closeAiModal();
+      }
     });
   }
 

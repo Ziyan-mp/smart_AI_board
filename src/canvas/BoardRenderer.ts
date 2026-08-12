@@ -13,6 +13,7 @@ import { LineObject } from '../models/LineObject';
 import { ArrowObject } from '../models/ArrowObject';
 import { TextObject } from '../models/TextObject';
 import { EquationObject } from '../models/EquationObject';
+import { CircuitComponentObject } from '../models/CircuitComponentObject';
 import { EquationRenderer } from '../equations/EquationRenderer';
 import { ViewTransform } from './ViewTransform';
 
@@ -137,6 +138,9 @@ export class BoardRenderer {
         break;
       case 'equation':
         this.renderEquation(obj as EquationObject);
+        break;
+      case 'circuit':
+        this.renderCircuitComponent(obj as CircuitComponentObject);
         break;
       default:
         break;
@@ -403,6 +407,31 @@ export class BoardRenderer {
       this.ctx.fillText(lines[i], drawX, -hh + i * lineHeight);
     }
 
+    this.ctx.restore();
+  }
+
+  private renderCircuitComponent(component: CircuitComponentObject): void {
+    this.ctx.save();
+    this.ctx.globalAlpha = component.opacity;
+    this.ctx.strokeStyle = component.color;
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.lineWidth = 2;
+
+    const centerX = component.x + component.width / 2;
+    const centerY = component.y + component.height / 2;
+    this.ctx.translate(centerX, centerY);
+    if (component.rotation) {
+      this.ctx.rotate(component.rotation);
+    }
+
+    this.ctx.fillRect(-component.width / 2, -component.height / 2, component.width, component.height);
+    this.ctx.strokeRect(-component.width / 2, -component.height / 2, component.width, component.height);
+
+    this.ctx.fillStyle = component.color;
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.font = '12px Arial';
+    this.ctx.fillText(component.label, 0, 0);
     this.ctx.restore();
   }
 

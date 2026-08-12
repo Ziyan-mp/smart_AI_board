@@ -27,7 +27,7 @@ export class PdfViewerService {
   /**
    * Loads a PDF file from an ArrayBuffer.
    */
-  public async loadPdf(data: ArrayBuffer, fileName: string): Promise<PdfDocument> {
+  public async loadPdf(data: ArrayBuffer, fileName: string, existingId?: string, existingCurrentPage?: number): Promise<PdfDocument> {
     this.closePdf();
 
     try {
@@ -38,9 +38,9 @@ export class PdfViewerService {
       });
 
       this.pdfProxy = await loadingTask.promise;
-      this.currentPageNum = 1;
+      this.currentPageNum = existingCurrentPage && existingCurrentPage >= 1 ? existingCurrentPage : 1;
 
-      const id = `pdf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      const id = existingId || `pdf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const name = fileName.replace(/\.[^/.]+$/, '').trim() || 'Document';
 
       this.currentDoc = {
@@ -48,13 +48,13 @@ export class PdfViewerService {
         name,
         fileName,
         pageCount: this.pdfProxy.numPages,
-        currentPage: 1,
+        currentPage: this.currentPageNum,
         arrayBuffer: data,
         createdAt: Date.now(),
       };
 
-      // Pre-render the first page
-      await this.renderPage(1);
+      // Pre-render the starting page
+      await this.renderPage(this.currentPageNum);
 
       return this.currentDoc;
     } catch (err: any) {
