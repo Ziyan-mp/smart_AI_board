@@ -32,12 +32,12 @@ export interface MathRecognitionProvider {
 
 export interface RecognitionProvider
   extends TextRecognitionProvider,
-    MathRecognitionProvider {}
+  MathRecognitionProvider { }
 
 
 
 export class RecognitionService {
-  constructor(private provider: RecognitionProvider) {}
+  constructor(private provider: RecognitionProvider) { }
 
   public recognize(
     mode: RecognitionMode,
@@ -57,7 +57,7 @@ export class RecognitionService {
 export class ApiRecognitionProvider implements RecognitionProvider {
   private async analyze(mode: string, strokes: BoardObject[], imageBase64?: string): Promise<any> {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/v1/analyze', {
+      const response = await fetch('https://smart-ai-board-backend.onrender.com/api/v1/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -70,7 +70,7 @@ export class ApiRecognitionProvider implements RecognitionProvider {
           image: imageBase64 || null
         })
       });
-      
+
       if (!response.ok) {
         let errorMessage = `API returned ${response.status}`;
         try {
@@ -83,7 +83,7 @@ export class ApiRecognitionProvider implements RecognitionProvider {
         }
         throw new Error(errorMessage);
       }
-      
+
       const data = await response.json();
       if (!data.success) {
         throw new Error(data.error || 'Unknown API error');
@@ -127,5 +127,4 @@ export class ApiRecognitionProvider implements RecognitionProvider {
 
 }
 
-export class HandwritingRecognitionService extends RecognitionService {}
-
+export class HandwritingRecognitionService extends RecognitionService { }
