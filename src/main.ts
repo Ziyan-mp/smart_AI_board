@@ -18,12 +18,13 @@ import { PageThumbnailRenderer } from './pages/PageThumbnailRenderer';
 import { PdfViewerService } from './pdf/PdfViewerService';
 import { PdfAnnotationManager } from './pdf/PdfAnnotationManager';
 import { HistoryManager } from './history/HistoryManager';
-import { FreehandObject } from './models/FreehandObject';
+
 import { TextObject, TextAlign } from './models/TextObject';
 import { EquationObject } from './models/EquationObject';
 import {
   HandwritingRecognitionService,
-  MockHandwritingRecognitionProvider,
+
+  ApiRecognitionProvider,
   RecognitionMode,
   RecognitionResultBase,
 } from './ai/HandwritingRecognitionService';
@@ -494,7 +495,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnCloseAiModal = document.getElementById('btn-close-ai-modal') as HTMLButtonElement | null;
 
   const handwritingRecognitionService = new HandwritingRecognitionService(
-    new MockHandwritingRecognitionProvider()
+    new ApiRecognitionProvider()
   );
 
   if (recognitionModeSelect) {
@@ -1153,20 +1154,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   pasteBtn = document.getElementById('btn-paste') as HTMLButtonElement | null;
   deleteBtn = document.getElementById('btn-delete') as HTMLButtonElement | null;
 
-  function getSelectedFreehandObjects(): FreehandObject[] {
+  function getSelectedObjectsForAI(): BoardObject[] {
     const selectedIds = whiteboard.selectionManager.getSelectedIds();
     return selectedIds
       .map((id) => whiteboard.boardState.getObject(id))
-      .filter((obj): obj is FreehandObject => obj !== undefined && obj?.type === 'freehand');
+      .filter((obj): obj is BoardObject => obj !== undefined && obj !== null);
   }
 
   function updateAIButtonState(): void {
-    const hasFreehandSelection = getSelectedFreehandObjects().length > 0;
+    const hasAISelection = getSelectedObjectsForAI().length > 0;
     if (aiToolBtn) {
-      aiToolBtn.disabled = !hasFreehandSelection;
-      aiToolBtn.title = hasFreehandSelection
-        ? 'Recognize selected handwriting'
-        : 'Select handwriting strokes first';
+      aiToolBtn.disabled = !hasAISelection;
+      aiToolBtn.title = hasAISelection
+        ? 'Recognize selected content'
+        : 'Select content first';
     }
   }
 
@@ -1210,49 +1211,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function getSelectedRecognitionMode(): RecognitionMode {
     if (!recognitionModeSelect) {
-      return 'handwriting';
+      return 'text';
     }
 
     const selected = recognitionModeSelect.value as RecognitionMode;
     return (
-      ['handwriting', 'equation', 'diagram', 'circuit', 'verilog'] as RecognitionMode[]
+      ['math', 'text'] as RecognitionMode[]
     ).includes(selected)
       ? selected
-      : 'handwriting';
+      : 'text';
   }
 
   function showAiModalContentForMode(mode: RecognitionMode): void {
     if (!aiModalTextArea || !aiModalOutput || !btnAiConvert || !aiModalSummary) return;
 
-    const commonDescription = 'Demo provider only — AI model not connected.';
     switch (mode) {
-      case 'equation':
-        aiModalSummary.textContent = `Recognize selected strokes as equation. ${commonDescription}`;
+      case 'math':
+        aiModalSummary.textContent = `Recognize selected content as math.`;
         aiModalTextArea.classList.add('hidden');
         aiModalOutput.classList.remove('hidden');
         btnAiConvert.textContent = 'Convert to Equation';
         break;
-      case 'diagram':
-        aiModalSummary.textContent = `Recognize selected strokes as diagram. ${commonDescription}`;
-        aiModalTextArea.classList.add('hidden');
-        aiModalOutput.classList.remove('hidden');
-        btnAiConvert.textContent = 'Accept Diagram Output';
-        break;
-      case 'circuit':
-        aiModalSummary.textContent = `Recognize selected strokes as circuit. ${commonDescription}`;
-        aiModalTextArea.classList.add('hidden');
-        aiModalOutput.classList.remove('hidden');
-        btnAiConvert.textContent = 'Accept Circuit Output';
-        break;
-      case 'verilog':
-        aiModalSummary.textContent = `Recognize selected strokes as Verilog. ${commonDescription}`;
-        aiModalTextArea.classList.add('hidden');
-        aiModalOutput.classList.remove('hidden');
-        btnAiConvert.textContent = 'Accept Verilog Output';
-        break;
-      case 'handwriting':
+
+      case 'text':
       default:
-        aiModalSummary.textContent = `Recognize selected strokes as handwriting. ${commonDescription}`;
+        aiModalSummary.textContent = `Recognize selected content as text.`;
         aiModalTextArea.classList.remove('hidden');
         aiModalOutput.classList.add('hidden');
         btnAiConvert.textContent = 'Convert to Text';
@@ -1260,27 +1243,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  async function openAiRecognitionModal(strokes: FreehandObject[]): Promise<void> {
+  async function openAiRecognitionModal(strokes: BoardObject[]): Promise<void> {
     if (!aiModalOverlay || !aiModalTextArea || !aiModalSummary || !aiModalOutput) return;
 
     aiModalResult = null;
     const mode = getSelectedRecognitionMode();
     aiModalOverlay.classList.remove('hidden');
-    aiModalOutput.textContent = 'Recognizing selected strokes...';
-    aiModalTextArea.value = 'Recognizing selected strokes...';
+    aiModalOutput.textContent = 'Recognizing selected content...';
+    aiModalTextArea.value = 'Recognizing selected content...';
     aiModalTextArea.disabled = true;
     showAiModalContentForMode(mode);
 
     try {
-      const result = await handwritingRecognitionService.recognize(mode, strokes);
+      const dataUrl = await BoardExporter.exportDataUrlForObjects(strokes);
+      const result = await handwritingRecognitionService.recognize(mode, strokes, dataUrl);
       aiModalResult = result;
 
-      const confidenceText = result.confidence !== undefined
-        ? `Mock confidence: ${(result.confidence * 100).toFixed(0)}% — `
+      const confidenceText = result.confidence !== undefined && result.confidence !== null && result.confidence > 0
+        ? `Confidence: ${(result.confidence * 100).toFixed(0)}% — `
         : '';
       aiModalSummary.textContent = `${confidenceText}${result.summary}`;
 
-      if (mode === 'handwriting') {
+      if (mode === 'text') {
         aiModalTextArea.value = result.recognizedText;
         aiModalTextArea.disabled = false;
         aiModalTextArea.focus();
@@ -1288,8 +1272,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         aiModalOutput.textContent = getRecognitionResultOutput(result);
         aiModalTextArea.disabled = true;
       }
-    } catch (err) {
-      aiModalSummary.textContent = 'Recognition failed. Please try again.';
+    } catch (err: any) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      aiModalSummary.textContent = `${mode === 'math' ? 'Math' : 'AI'} recognition failed: ${errorMessage}`;
       aiModalOutput.textContent = '';
       aiModalTextArea.value = '';
       aiModalTextArea.disabled = false;
@@ -1300,31 +1285,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function getRecognitionResultOutput(result: RecognitionResultBase): string {
     switch (result.mode) {
-      case 'equation':
-        return `Recognized equation:\n${(result as any).equation}\n\nLaTeX:\n${(result as any).latex}`;
-      case 'diagram': {
-        const diagramResult = result as any;
-        const nodes = diagramResult.nodes
-          .map((node: any) => `• ${node.label} (${node.type}) @ ${node.x},${node.y}`)
-          .join('\n');
-        const edges = diagramResult.edges
-          .map((edge: any) => `• ${edge.from} → ${edge.to}${edge.label ? ` (${edge.label})` : ''}`)
-          .join('\n');
-        return `Diagram description:\n${diagramResult.description}\n\nNodes:\n${nodes}\n\nEdges:\n${edges}`;
-      }
-      case 'circuit': {
-        const circuitResult = result as any;
-        const components = circuitResult.components
-          .map((component: any) => `• ${component.label} (${component.componentType}) @ ${component.x},${component.y}`)
-          .join('\n');
-        const connections = circuitResult.connections
-          .map((connection: any) => `• ${connection.from} → ${connection.to}${connection.label ? ` (${connection.label})` : ''}`)
-          .join('\n');
-        return `Circuit description:\n${circuitResult.description}\n\nComponents:\n${components}\n\nConnections:\n${connections}`;
-      }
-      case 'verilog':
-        return `Verilog code:\n\n${(result as any).code}`;
-      case 'handwriting':
+      case 'math':
+        const mathRes = result as any;
+        let out = `Recognized equation:\n${mathRes.equation}`;
+        if (mathRes.solution) {
+            out += `\n\nSolution:\n${mathRes.solution}`;
+        }
+        out += `\n\nLaTeX:\n${mathRes.latex}`;
+        return out;
+      case 'text':
       default:
         return result.recognizedText;
     }
@@ -1367,9 +1336,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (aiToolBtn) {
     aiToolBtn.addEventListener('click', async () => {
-      const selectedStrokes = getSelectedFreehandObjects();
+      const selectedStrokes = getSelectedObjectsForAI();
       if (selectedStrokes.length === 0) {
-        showToast('Select freehand strokes before using handwriting recognition.');
+        showToast('Please select something first');
         return;
       }
 
@@ -1396,9 +1365,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      const selectedStrokes = getSelectedFreehandObjects();
+      const selectedStrokes = getSelectedObjectsForAI();
       if (selectedStrokes.length === 0) {
-        showToast('The selected handwriting strokes are no longer available.');
+        showToast('The selected content is no longer available.');
         closeAiModal();
         return;
       }
@@ -1411,9 +1380,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         whiteboard.boardState.removeObject(stroke.id);
       }
 
-      if (mode === 'equation') {
-        const equationResult = aiModalResult as any;
-        const equationText = equationResult.latex || equationResult.equation || aiModalResult.recognizedText;
+      if (mode === 'math') {
+        const mathResult = aiModalResult as any;
+        const equationText = mathResult.latex || mathResult.equation || aiModalResult.recognizedText;
         newObject = {
           id: whiteboard.generateId(),
           type: 'equation',
@@ -1432,14 +1401,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           opacity: 1,
         };
       } else {
-        const displayText =
-          mode === 'verilog'
-            ? `Verilog code:\n\n${(aiModalResult as any).code}`
-            : aiModalResult.mode === 'diagram'
-            ? getRecognitionResultOutput(aiModalResult)
-            : aiModalResult.mode === 'circuit'
-            ? getRecognitionResultOutput(aiModalResult)
-            : aiModalTextArea?.value.trim() || aiModalResult.recognizedText;
+        const displayText = aiModalTextArea?.value.trim() || aiModalResult.recognizedText;
 
         const lines = displayText.split('\n');
         const textHeight = Math.max(80, lines.length * 24 + 20);
@@ -1474,10 +1436,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         closeAiModal();
         updateEditButtonsState();
         showToast(
-          mode === 'equation'
+          mode === 'math'
             ? 'Equation recognition converted to board object.'
-            : mode === 'handwriting'
-            ? 'Handwriting converted to editable text.'
+            : mode === 'text'
+            ? 'Text converted to editable text.'
             : 'Recognition output accepted as board text.'
         );
       }
@@ -1746,9 +1708,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   toolButtons.forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       const toolName = button.getAttribute('data-tool');
       if (!toolName) return;
+
+      if (toolName === 'equation') {
+        const selectedObjects = getSelectedObjectsForAI();
+        if (selectedObjects.length === 0) {
+          showToast('Please select something first');
+          return;
+        }
+        
+        if (recognitionModeSelect) {
+          recognitionModeSelect.value = 'equation';
+        }
+        await openAiRecognitionModal(selectedObjects);
+        return;
+      }
 
       if (toolName === 'shapes' || toolName === 'text') {
         return;
@@ -1762,8 +1738,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolName === 'select' ||
         toolName === 'lasso' ||
         toolName === 'line' ||
-        toolName === 'arrow' ||
-        toolName === 'equation'
+        toolName === 'arrow'
       ) {
         closeShapesPopover();
         closeTextPopover();
@@ -1785,7 +1760,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           widthValueLabel &&
           toolName !== 'select' &&
           toolName !== 'lasso' &&
-          toolName !== 'equation'
+          (toolName as string) !== 'equation'
         ) {
           widthInput.value = whiteboard.getWidth().toString();
           widthValueLabel.textContent = `${whiteboard.getWidth()} px`;

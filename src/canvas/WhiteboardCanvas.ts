@@ -63,6 +63,11 @@ export class WhiteboardCanvas {
   private isLassoing: boolean = false;
   private lassoPoints: { x: number; y: number }[] = [];
 
+  // Active marquee selection
+  private isMarqueeSelecting: boolean = false;
+  private marqueeStartPos: { x: number; y: number } | null = null;
+  private marqueeEndPos: { x: number; y: number } | null = null;
+
   // Active temporary text editor overlay
   public activeTextEditor: {
     textarea: HTMLTextAreaElement;
@@ -216,6 +221,35 @@ export class WhiteboardCanvas {
       this.liveShape,
       this.pdfPage
     );
+
+    // Render Marquee Selection box
+    if (this.isMarqueeSelecting && this.marqueeStartPos && this.marqueeEndPos) {
+      const sx = this.marqueeStartPos.x;
+      const sy = this.marqueeStartPos.y;
+      const ex = this.marqueeEndPos.x;
+      const ey = this.marqueeEndPos.y;
+
+      const minX = Math.min(sx, ex);
+      const minY = Math.min(sy, ey);
+      const width = Math.abs(ex - sx);
+      const height = Math.abs(ey - sy);
+
+      // Convert board coordinates to screen coordinates
+      const screenPos1 = this.viewTransform.boardToScreen(minX, minY);
+      const screenPos2 = this.viewTransform.boardToScreen(minX + width, minY + height);
+
+      const screenWidth = screenPos2.x - screenPos1.x;
+      const screenHeight = screenPos2.y - screenPos1.y;
+
+      this.ctx.save();
+      this.ctx.strokeStyle = '#0B99FF';
+      this.ctx.fillStyle = 'rgba(11, 153, 255, 0.1)';
+      this.ctx.lineWidth = 1;
+      this.ctx.setLineDash([5, 5]);
+      this.ctx.fillRect(screenPos1.x, screenPos1.y, screenWidth, screenHeight);
+      this.ctx.strokeRect(screenPos1.x, screenPos1.y, screenWidth, screenHeight);
+      this.ctx.restore();
+    }
   }
 
   /**
@@ -1283,7 +1317,14 @@ export class WhiteboardCanvas {
           }
         } else {
           this.selectionManager.clearSelection();
-          console.log('[WhiteboardCanvas] Deselected (empty space clicked)');
+          this.isMarqueeSelecting = true;
+          this.marqueeStartPos = boardPos;
+          this.marqueeEndPos = boardPos;
+          try {
+            this.canvas.setPointerCapture(event.pointerId);
+          } catch {
+            // Ignore
+          }
         }
         this.render();
         return;
@@ -1398,6 +1439,14 @@ export class WhiteboardCanvas {
         return;
       }
 
+      if (this.isMarqueeSelecting && this.marqueeStartPos) {
+        const screenPos = this.getPointerPosition(event);
+        const boardPos = this.viewTransform.screenToBoard(screenPos.x, screenPos.y);
+        this.marqueeEndPos = boardPos;
+        this.render();
+        return;
+      }
+
       // Handle Active Transformation (Move, Resize, Rotate)
       if (this.activeTransform) {
         const screenPos = this.getPointerPosition(event);
@@ -1472,14 +1521,72 @@ export class WhiteboardCanvas {
 
         if (this.lassoPoints.length >= 3) {
           const selected = this.findObjectsInLasso(this.lassoPoints);
-          this.selectionManager.setSelectedIds(selected);
-          console.log(`[WhiteboardCanvas] Lasso selected ${selected.length} object(s).`);
+          if (selected.length > 0) {
+            this.selectionManager.setSelectedIds(selected);
+          } else {
+            this.selectionManager.clearSelection();
+          }
         } else {
           this.selectionManager.clearSelection();
         }
 
-        this.lassoPoints = [];
         this.isLassoing = false;
+        this.lassoPoints = [];
+        this.render();
+        return;
+      }
+
+      if (this.isMarqueeSelecting && this.marqueeStartPos && this.marqueeEndPos) {
+        try {
+          if (this.canvas.hasPointerCapture(event.pointerId)) {
+            this.canvas.releasePointerCapture(event.pointerId);
+          }
+        } catch {
+          // Ignore
+        }
+
+        const minX = Math.min(this.marqueeStartPos.x, this.marqueeEndPos.x);
+        const maxX = Math.max(this.marqueeStartPos.x, this.marqueeEndPos.x);
+        const minY = Math.min(this.marqueeStartPos.y, this.marqueeEndPos.y);
+        const maxY = Math.max(this.marqueeStartPos.y, this.marqueeEndPos.y);
+
+        const objects = this.boardState.getObjects();
+        const selectedIds = [];
+
+        for (const obj of objects) {
+          if (!obj.visible || obj.locked) continue;
+          
+          let objMinX = obj.x;
+          let objMaxX = obj.x + obj.width;
+          let objMinY = obj.y;
+          let objMaxY = obj.y + obj.height;
+          
+          // For line and arrow, use start/end points
+          if (obj.type === 'line' || obj.type === 'arrow') {
+            const line = obj as LineObject | ArrowObject;
+            objMinX = Math.min(line.startX, line.endX);
+            objMaxX = Math.max(line.startX, line.endX);
+            objMinY = Math.min(line.startY, line.endY);
+            objMaxY = Math.max(line.startY, line.endY);
+          }
+
+          if (
+            minX <= objMaxX &&
+            maxX >= objMinX &&
+            minY <= objMaxY &&
+            maxY >= objMinY
+          ) {
+            selectedIds.push(obj.id);
+          }
+        }
+
+        if (selectedIds.length > 0) {
+          this.selectionManager.setSelectedIds(selectedIds);
+        }
+        
+        this.isMarqueeSelecting = false;
+        this.marqueeStartPos = null;
+        this.marqueeEndPos = null;
         this.render();
         return;
       }

@@ -302,6 +302,36 @@ export class BoardExporter {
   }
 
   /**
+   * Exports a specific set of objects as a Base64 JPEG data URL.
+   */
+  public static async exportDataUrlForObjects(objects: readonly BoardObject[], scale: number = 2): Promise<string> {
+    const bounds = this.calculateBoardBounds(objects, 10);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(bounds.width * scale);
+    canvas.height = Math.ceil(bounds.height * scale);
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to create offscreen 2D canvas context for data URL export.');
+    }
+
+    // Fill clean white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Set transform matrix to offset board bounds and apply scale
+    ctx.setTransform(scale, 0, 0, scale, -bounds.minX * scale, -bounds.minY * scale);
+
+    // Render objects
+    for (const obj of objects) {
+      this.renderObjectToCanvas(ctx, obj);
+    }
+
+    return canvas.toDataURL('image/jpeg', 0.9);
+  }
+
+  /**
    * Internal helper rendering a BoardObject onto a CanvasRenderingContext2D.
    */
   private static renderObjectToCanvas(ctx: CanvasRenderingContext2D, obj: BoardObject): void {
