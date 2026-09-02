@@ -24,44 +24,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ----------------------------------------
-    # Database startup check
-    # ----------------------------------------
+    # Create database tables on startup
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        logger.info(
-            "Database tables verified/created successfully."
-        )
+        logger.info("Database tables verified/created successfully.")
 
     except Exception as e:
-        logger.error(
-            f"Error creating tables: {e}"
-        )
-
-    # ----------------------------------------
-    # Pix2Text startup diagnostic
-    # ----------------------------------------
-    logger.info(
-        f"[AI] Python version: {sys.version}"
-    )
-
-    try:
-        logger.info(
-            "[AI] Testing Pix2Text import at startup..."
-        )
-
-        from pix2text import Pix2Text
-
-        logger.info(
-            "[AI] Pix2Text import successful at startup"
-        )
-
-    except Exception as e:
-        logger.exception(
-            f"[AI] Pix2Text startup import failed: {e}"
-        )
+        logger.error(f"Error creating tables: {e}")
 
     yield
 
@@ -73,10 +44,8 @@ app = FastAPI(
 )
 
 
-# ----------------------------------------
 # CORS
-# ----------------------------------------
-
+# For local development and MVP deployment.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,10 +55,6 @@ app.add_middleware(
 )
 
 
-# ----------------------------------------
-# Health
-# ----------------------------------------
-
 @app.get("/api/v1/health")
 def health_check():
     return {
@@ -98,10 +63,6 @@ def health_check():
         "module": "math",
     }
 
-
-# ----------------------------------------
-# AI Analyze
-# ----------------------------------------
 
 @app.post(
     "/api/v1/analyze",
@@ -118,39 +79,29 @@ async def analyze(
     Pix2Text -> normalization -> SymPy solving.
     """
 
+    # MVP is math-only
     mode = "math"
 
     try:
-        logger.info(
-            "[AI] Received analysis request"
-        )
+        logger.info("[AI] Received analysis request")
+        logger.info("[AI] Mode: math")
 
-        logger.info(
-            "[AI] Mode: math"
-        )
+        # Diagnostic: identify the Python runtime used by Render
+        logger.info(f"[AI] Python version: {sys.version}")
 
         if not request.image:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "An image is required for "
-                    "mathematical analysis."
-                ),
+                detail="An image is required for mathematical analysis.",
             )
 
         # ----------------------------------------
         # Math AI pipeline
         # ----------------------------------------
-
-        result_dict = process_math(
-            request.image
-        )
+        result_dict = process_math(request.image)
 
         result_data = AIResultData(
-            module=result_dict.get(
-                "module",
-                "math",
-            ),
+            module=result_dict.get("module", "math"),
             result_type=result_dict.get(
                 "result_type",
                 "analysis",
@@ -200,7 +151,10 @@ async def analyze(
     # ----------------------------------------
     # Database audit
     # ----------------------------------------
-
+    #
+    # Database failure must NOT prevent a
+    # successful AI response.
+    #
     try:
         logger.info(
             "[DB] Saving AI request audit..."
@@ -210,9 +164,7 @@ async def analyze(
             user_id=request.user_id,
             board_id=request.board_id,
             selected_content=request.selected_content,
-            recognized_content=(
-                detection.recognized_content
-            ),
+            recognized_content=detection.recognized_content,
             subject=detection.subject,
             content_type=detection.content_type,
             action=detection.action,
@@ -222,6 +174,7 @@ async def analyze(
 
         db.add(db_request)
 
+        # Get generated request ID
         await db.flush()
 
         db_result = AIResult(
@@ -244,17 +197,14 @@ async def analyze(
         await db.rollback()
 
         logger.warning(
-            "[DB] Warning: failed to save "
-            f"AI request audit: {e}"
+            f"[DB] Warning: failed to save AI request audit: {e}"
         )
 
     # ----------------------------------------
     # Return AI result
     # ----------------------------------------
 
-    logger.info(
-        "[AI] Returning Math Result"
-    )
+    logger.info("[AI] Returning Math Result")
 
     return AIAnalyzeResponse(
         success=True,
