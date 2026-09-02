@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+import sys
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,7 +46,6 @@ app = FastAPI(
 
 # CORS
 # For local development and MVP deployment.
-# We will restrict this to the deployed frontend URL later.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,6 +86,9 @@ async def analyze(
         logger.info("[AI] Received analysis request")
         logger.info("[AI] Mode: math")
 
+        # Diagnostic: identify the Python runtime used by Render
+        logger.info(f"[AI] Python version: {sys.version}")
+
         if not request.image:
             raise HTTPException(
                 status_code=400,
@@ -99,7 +102,10 @@ async def analyze(
 
         result_data = AIResultData(
             module=result_dict.get("module", "math"),
-            result_type=result_dict.get("result_type", "analysis"),
+            result_type=result_dict.get(
+                "result_type",
+                "analysis",
+            ),
             recognized_content=result_dict.get(
                 "recognized_content",
                 "",
