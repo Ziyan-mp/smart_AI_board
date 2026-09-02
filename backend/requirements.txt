@@ -9,3 +9,4 @@ pix2text
 
 pillow
 sympy
+asyncpg
