@@ -1,14 +1,13 @@
 # AI Smart Board
 
-An intelligent digital whiteboard application that leverages the power of local AI to analyze and understand content drawn, written, or placed on the canvas. With specialized modules for Mathematics and Text, the AI Smart Board can solve equations, read handwriting, and provide detailed explanations directly within your workspace.
+An intelligent digital whiteboard application that leverages the power of local AI to analyze and understand handwritten mathematics. The AI Smart Board currently focuses on mathematical analysis, allowing you to draw or write equations, which are then detected, solved, and rendered directly within your workspace.
 
 ## 🚀 Features
 
 - **Interactive Canvas**: A feature-rich digital whiteboard for drawing, writing, and organizing ideas.
-- **AI-Powered Analysis**: Select any content on the board and let the AI analyze it locally.
-- **Specialized AI Modules**:
-  - **Math**: Automatically detects, solves, and renders mathematical equations using Pix2Text.
-  - **Text**: Reads and converts handwriting to text using Tesseract OCR.
+- **AI-Powered Mathematical Analysis**: Select math content on the board and let the AI analyze it locally.
+- **Math Recognition**: Automatically detects and extracts mathematical equations using Pix2Text.
+- **Mathematical Solving**: Solves recognized equations using SymPy.
 - **PDF & Export Support**: Import PDFs to annotate directly on the board, or export your entire canvas as a PDF using `jspdf`.
 - **History & Selection**: Full undo/redo capabilities (`history`), advanced selection tools (`selection`), and clipboard support.
 - **Local Storage**: Automatically saves your board state locally so you never lose your work.
@@ -23,9 +22,9 @@ An intelligent digital whiteboard application that leverages the power of local 
 
 ### Backend
 - **Framework**: FastAPI (Python)
-- **AI Integration**: Pix2Text and Tesseract OCR
-- **Database**: SQLAlchemy (Async) with SQLite / PostgreSQL
-- **Architecture**: Modular routing system for handling different AI analysis types (Math, Text)
+- **AI Integration**: Pix2Text and SymPy
+- **Database**: SQLAlchemy (Async) with PostgreSQL / Neon
+- **Architecture**: Modular math analysis architecture
 
 ## 📁 Project Structure
 
@@ -38,7 +37,7 @@ An intelligent digital whiteboard application that leverages the power of local 
 │   ├── database.py           # Database connection and session
 │   ├── requirements.txt      # Python dependencies
 │   └── services/             # Core business logic and AI routing
-│       └── modules/          # Specialized AI modules (math, text)
+│       └── modules/          # Specialized AI math analysis module
 ├── src/                      # Frontend source code
 │   ├── ai/                   # AI integration on frontend
 │   ├── canvas/               # Core whiteboard canvas logic
@@ -59,8 +58,25 @@ An intelligent digital whiteboard application that leverages the power of local 
 
 ### Prerequisites
 - Node.js (v18+ recommended)
-- Python 3.9+
-- Local AI Tools (Pix2Text, Tesseract)
+- Python 3.11
+- Local AI Tools (Pix2Text, SymPy)
+
+### Environment Variables
+
+Before starting the application, you need to configure your environment variables. 
+Create `.env` files in both the `backend` and frontend root directories. **Real secrets must be stored in these environment variables and must NOT be committed to Git.**
+
+**Backend `.env`:**
+```env
+DATABASE_URL=<your PostgreSQL/Neon connection string>
+FRONTEND_URL=http://localhost:5173
+```
+*(Do NOT put an actual database password or secret in the README or version control.)*
+
+**Frontend `.env`:**
+```env
+VITE_API_URL=http://localhost:8000
+```
 
 ### Backend Setup
 
@@ -80,12 +96,11 @@ An intelligent digital whiteboard application that leverages the power of local 
    ```bash
    pip install -r requirements.txt
    ```
-   # DATABASE_URL=postgresql+psycopg2://... (Optional, defaults to SQLite)
-5. Start the FastAPI development server:
+4. Start the FastAPI development server:
    ```bash
    uvicorn main:app --reload
    ```
-   The backend will be available at `http://localhost:8000`. You can view the API documentation at `http://localhost:8000/docs`.
+   The backend API will be available at `http://localhost:8000`. You can view the Swagger API documentation at `http://localhost:8000/docs`.
 
 ### Frontend Setup
 
@@ -97,7 +112,21 @@ An intelligent digital whiteboard application that leverages the power of local 
    ```bash
    npm run dev
    ```
-3. Open your browser and navigate to the URL provided in the terminal (usually `http://localhost:5173`).
+3. Open your browser and navigate to the Vite development server (usually runs at `http://localhost:5173`).
+
+## 🚀 Deployment
+
+The intended MVP deployment architecture is as follows:
+- **Frontend**: Render Static Site
+- **Backend**: Render Web Service
+- **Database**: PostgreSQL / Neon
+
+**Backend Production Start Command:**
+```bash
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+*Note: The backend uses Pix2Text ML models for mathematical recognition, so the initial startup and model initialization may take longer than a standard FastAPI application. Ensure your deployment environment allows for a longer startup timeout.*
 
 ## 🤝 Contributing
 Feel free to open issues or submit pull requests for any bugs or feature requests!
